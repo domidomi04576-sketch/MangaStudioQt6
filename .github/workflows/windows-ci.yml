@@ -126,15 +126,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with $LASTEXITCODE" }
           Copy-Item "$env:GITHUB_WORKSPACE\work\source" "$portable\source" -Recurse
           @'
-@echo off
-cd /d "%~dp0"
-start "" "MangaStudioQt6.exe"
-'@ | Set-Content -LiteralPath "$portable\START_MANGA_STUDIO.bat" -Encoding ascii
+          @echo off
+          cd /d "%~dp0"
+          start "" "MangaStudioQt6.exe"
+          '@ | Set-Content -LiteralPath "$portable\START_MANGA_STUDIO.bat" -Encoding ascii
           @'
-MangaStudioQt6 23.6 RC7.6
-Windows CI verified build.
-Validation: compile + full regression suite + startup smoke test + visible GUI event-loop startup.
-'@ | Set-Content -LiteralPath "$portable\PORTABLE-READY.txt" -Encoding utf8
+          MangaStudioQt6 23.6 RC7.6
+          Windows CI verified build.
+          Validation: compile + full regression suite + startup smoke test + visible GUI event-loop startup.
+          '@ | Set-Content -LiteralPath "$portable\PORTABLE-READY.txt" -Encoding utf8
           & "$portable\MangaStudioQt6.exe" --startup-smoke-test
           if ($LASTEXITCODE -ne 0) { throw "deployed portable smoke test failed with $LASTEXITCODE" }
           Get-ChildItem $portable -Recurse | ForEach-Object { if (-not $_.PSIsContainer) { $_.FullName } } | Out-File "$portable\PACKAGE-FILES.txt" -Encoding utf8
