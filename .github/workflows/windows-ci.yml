@@ -1,0 +1,160 @@
+name: Windows build and startup verification
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-verify:
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct and expand source package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $parts = Get-ChildItem "$env:GITHUB_WORKSPACE\ci\source.part*" | Sort-Object Name
+          if ($parts.Count -ne 9) { throw "Expected 9 source parts, found $($parts.Count)." }
+          $b64 = ($parts | ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join ''
+          $archive = Join-Path $env:RUNNER_TEMP 'MangaStudioQt6-source.tar.gz'
+          [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($b64))
+          $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($hash -ne '4fd54f8971d0aeb7b3de5db21e8f48285e43b77f7d4fcaed1bc94b136f7fc1dc') { throw "Source archive SHA-256 mismatch: $hash" }
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\work" | Out-Null
+          tar.exe -xzf $archive -C "$env:GITHUB_WORKSPACE\work"
+          if ($LASTEXITCODE -ne 0) { throw "source package extraction failed: $LASTEXITCODE" }
+          if (-not (Test-Path "$env:GITHUB_WORKSPACE\work\source\CMakeLists.txt")) { throw "source package extraction did not produce source\CMakeLists.txt" }
+
+      - name: Download exact Qt 6.11.2 and MinGW 13.1 toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tools = Join-Path $env:RUNNER_TEMP 'mangastudio-toolchain'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $seven = Join-Path $tools '7zr.exe'
+          $qtArchive = Join-Path $tools 'qtbase.7z'
+          $mingwArchive = Join-Path $tools 'mingw.7z'
+          curl.exe -L --fail --retry 3 -o $seven 'https://github.com/ip7z/7zip/releases/download/26.03/7zr.exe'
+          curl.exe -L --fail --retry 3 -o $qtArchive 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6112/qt6_6112_mingw/qt.qt6.6112.win64_mingw/6.11.2-0-202608131017qtbase-Windows-Windows_11_24H2-Mingw-Windows-Windows_11_24H2-X86_64.7z'
+          curl.exe -L --fail --retry 3 -o $mingwArchive 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/tools_mingw1310/qt.tools.win64_mingw1310/13.1.0-202407240918mingw1310.7z'
+          $expected = @{
+            $seven = 'ad4c82fadcbdf93c03b4fc440f300509c7d60c5c2f4d183e35d9d70d6957037d'
+            $qtArchive = '8bbd42aa6b7dbb3ac9c88762bbf6f974e29348054186ef5cb920b105c786d81d'
+            $mingwArchive = 'a7b502294a903b64fccd4a41ba39f48d3f6c9a5ece167f0cfaeac920d15b344f'
+          }
+          foreach ($p in $expected.Keys) {
+            $actual=(Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant()
+            if ($actual -ne $expected[$p]) { throw "SHA-256 mismatch for $p : $actual" }
+          }
+          $qt = Join-Path $tools 'qt'
+          $mg = Join-Path $tools 'mingw'
+          New-Item -ItemType Directory -Force -Path $qt,$mg | Out-Null
+          & $seven x -y "-o$qt" $qtArchive | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "Qt extraction failed: $LASTEXITCODE" }
+          & $seven x -y "-o$mg" $mingwArchive | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "MinGW extraction failed: $LASTEXITCODE" }
+          $qmake = Get-ChildItem $qt -Recurse -Filter qmake.exe | Select-Object -First 1 -ExpandProperty FullName
+          $gpp = Get-ChildItem $mg -Recurse -Filter g++.exe | Where-Object { $_.FullName -match '\\bin\\g\+\+\.exe$' } | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $qmake -or -not $gpp) { throw 'Required Qt/MinGW executables were not found after extraction.' }
+          $qtRoot = Split-Path (Split-Path $qmake)
+          $mingwBin = Split-Path $gpp
+          "QT_ROOT=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "MINGW_BIN=$mingwBin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$qtRoot\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$mingwBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "Qt root: $qtRoot"
+          Write-Host "MinGW bin: $mingwBin"
+
+      - name: Configure with CMake
+        shell: pwsh
+        run: |
+          $src="$env:GITHUB_WORKSPACE\work\source"
+          $build="$env:GITHUB_WORKSPACE\build"
+          cmake -S $src -B $build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_ROOT"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build application and regression test executable
+        shell: pwsh
+        run: |
+          cmake --build "$env:GITHUB_WORKSPACE\build" --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem "$env:GITHUB_WORKSPACE\build" -Filter '*.exe' -Recurse | Format-Table FullName,Length
+
+      - name: Run full regression suite
+        shell: pwsh
+        run: |
+          $env:PATH="$env:QT_ROOT\bin;$env:MINGW_BIN;$env:PATH"
+          ctest --test-dir "$env:GITHUB_WORKSPACE\build" --output-on-failure --timeout 180
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify hidden startup smoke test
+        shell: pwsh
+        run: |
+          $env:PATH="$env:QT_ROOT\bin;$env:MINGW_BIN;$env:PATH"
+          $exe="$env:GITHUB_WORKSPACE\build\MangaStudioQt6.exe"
+          & $exe --startup-smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "startup smoke test failed with $LASTEXITCODE" }
+
+      - name: Verify actual GUI event-loop startup
+        shell: pwsh
+        run: |
+          $env:PATH="$env:QT_ROOT\bin;$env:MINGW_BIN;$env:PATH"
+          $marker=Join-Path $env:TEMP 'MangaStudioQt6-ci-gui-startup.txt'
+          Remove-Item -Force -ErrorAction SilentlyContinue $marker
+          $exe="$env:GITHUB_WORKSPACE\build\MangaStudioQt6.exe"
+          & $exe --ci-gui-startup-test
+          $code=$LASTEXITCODE
+          if (Test-Path $marker) { Get-Content $marker | Out-Host }
+          if ($code -ne 0) { throw "visible GUI startup test failed with $code" }
+          if (-not (Test-Path $marker)) { throw 'GUI startup marker was not created.' }
+          if (-not ((Get-Content -Raw $marker) -match 'GUI_STARTUP_OK')) { throw 'GUI startup marker did not report success.' }
+
+      - name: Build portable folder
+        shell: pwsh
+        run: |
+          $portable="$env:GITHUB_WORKSPACE\portable\MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified"
+          New-Item -ItemType Directory -Force -Path $portable | Out-Null
+          Copy-Item "$env:GITHUB_WORKSPACE\build\MangaStudioQt6.exe" "$portable\MangaStudioQt6.exe"
+          & "$env:QT_ROOT\bin\windeployqt.exe" --release --no-translations --compiler-runtime "$portable\MangaStudioQt6.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with $LASTEXITCODE" }
+          Copy-Item "$env:GITHUB_WORKSPACE\work\source" "$portable\source" -Recurse
+          @'
+@echo off
+cd /d "%~dp0"
+start "" "MangaStudioQt6.exe"
+'@ | Set-Content -LiteralPath "$portable\START_MANGA_STUDIO.bat" -Encoding ascii
+          @'
+MangaStudioQt6 23.6 RC7.6
+Windows CI verified build.
+Validation: compile + full regression suite + startup smoke test + visible GUI event-loop startup.
+'@ | Set-Content -LiteralPath "$portable\PORTABLE-READY.txt" -Encoding utf8
+          & "$portable\MangaStudioQt6.exe" --startup-smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "deployed portable smoke test failed with $LASTEXITCODE" }
+          Get-ChildItem $portable -Recurse | ForEach-Object { if (-not $_.PSIsContainer) { $_.FullName } } | Out-File "$portable\PACKAGE-FILES.txt" -Encoding utf8
+
+      - name: Zip verified portable build
+        shell: pwsh
+        run: |
+          $folder="$env:GITHUB_WORKSPACE\portable\MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified"
+          $zip="$env:GITHUB_WORKSPACE\MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified.zip"
+          Compress-Archive -Path $folder -DestinationPath $zip -CompressionLevel Optimal
+          $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          "$hash  MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified.zip" | Set-Content "$zip.sha256.txt" -Encoding ascii
+          Write-Host "Portable SHA-256: $hash"
+
+      - name: Upload verified portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified
+          path: |
+            MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified.zip
+            MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified.zip.sha256.txt
+          if-no-files-found: error
+          retention-days: 30
