@@ -88,7 +88,7 @@ jobs:
         run: |
           $src="$env:GITHUB_WORKSPACE\work\source"
           $build="$env:GITHUB_WORKSPACE\build"
-          cmake -S $src -B $build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_ROOT"
+          cmake -S $src -B $build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_ROOT" '-DCMAKE_CXX_FLAGS_RELEASE=-O2 -g -DNDEBUG'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build application and regression test executable
@@ -125,7 +125,7 @@ jobs:
             Write-Warning "gdb.exe not available at $gdb"
             exit 0
           }
-          & $gdb -q -batch -ex "set pagination off" -ex "run" -ex "thread apply all bt" --args $testExe $out
+          & $gdb -q -batch -ex "set pagination off" -ex "run" -ex "bt 30" -ex "info line *$pc" -ex "thread apply all bt 15" --args $testExe $out
           Write-Host "GDB diagnostic exit code: $LASTEXITCODE"
           exit 0
 
