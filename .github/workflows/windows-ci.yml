@@ -72,7 +72,7 @@ jobs:
           Write-Host "Qt root: $qtRoot"
           Write-Host "MinGW bin: $mingwBin"
 
-      - name: Apply final validated RC7.6 fixes
+      - name: Apply baseline validated RC7.6 fixes
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -92,6 +92,24 @@ jobs:
           if (-not $testText.Contains($testNeedle)) { throw 'source-record test update target not found' }
           $testText=$testText.Replace($testNeedle,$testReplacement)
           [IO.File]::WriteAllText($testPath,$testText,[Text.UTF8Encoding]::new($false))
+
+      - name: Apply RC7.7 bubble breakout and transform fixes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $patch="$env:GITHUB_WORKSPACE\ci\rc77-bubble-breakout.patch"
+          $src="$env:GITHUB_WORKSPACE\work\source"
+          Push-Location $src
+          try {
+            git apply --check $patch
+            if ($LASTEXITCODE -ne 0) { throw "RC7.7 patch preflight failed with $LASTEXITCODE" }
+            git apply $patch
+            if ($LASTEXITCODE -ne 0) { throw "RC7.7 patch apply failed with $LASTEXITCODE" }
+          }
+          finally {
+            Pop-Location
+          }
+
       - name: Configure with CMake
         shell: pwsh
         run: |
@@ -182,7 +200,7 @@ jobs:
       - name: Build portable folder
         shell: pwsh
         run: |
-          $portable="$env:GITHUB_WORKSPACE\portable\MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified"
+          $portable="$env:GITHUB_WORKSPACE\portable\MangaStudioQt6-Portable-v23.6-RC7.7-WindowsVerified"
           New-Item -ItemType Directory -Force -Path $portable | Out-Null
           Copy-Item "$env:GITHUB_WORKSPACE\build\MangaStudioQt6.exe" "$portable\MangaStudioQt6.exe"
           & "$env:QT_ROOT\bin\windeployqt.exe" --release --no-translations --compiler-runtime "$portable\MangaStudioQt6.exe"
@@ -194,7 +212,7 @@ jobs:
           start "" "MangaStudioQt6.exe"
           '@ | Set-Content -LiteralPath "$portable\START_MANGA_STUDIO.bat" -Encoding ascii
           @'
-          MangaStudioQt6 23.6 RC7.6
+          MangaStudioQt6 23.6 RC7.7
           Windows CI verified build.
           Validation: compile + full regression suite + startup smoke test + real GUI startup + deployed smoke test + isolated deployed GUI startup without Qt/MinGW on PATH.
           '@ | Set-Content -LiteralPath "$portable\PORTABLE-READY.txt" -Encoding utf8
@@ -208,7 +226,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $portable="$env:GITHUB_WORKSPACE\portable\MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified"
+          $portable="$env:GITHUB_WORKSPACE\portable\MangaStudioQt6-Portable-v23.6-RC7.7-WindowsVerified"
           $exe=Join-Path $portable 'MangaStudioQt6.exe'
           $savedPath=$env:PATH
           try {
@@ -250,19 +268,19 @@ jobs:
       - name: Zip verified portable build
         shell: pwsh
         run: |
-          $folder="$env:GITHUB_WORKSPACE\portable\MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified"
-          $zip="$env:GITHUB_WORKSPACE\MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified.zip"
+          $folder="$env:GITHUB_WORKSPACE\portable\MangaStudioQt6-Portable-v23.6-RC7.7-WindowsVerified"
+          $zip="$env:GITHUB_WORKSPACE\MangaStudioQt6-Portable-v23.6-RC7.7-WindowsVerified.zip"
           Compress-Archive -Path $folder -DestinationPath $zip -CompressionLevel Optimal
           $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
-          "$hash  MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified.zip" | Set-Content "$zip.sha256.txt" -Encoding ascii
+          "$hash  MangaStudioQt6-Portable-v23.6-RC7.7-WindowsVerified.zip" | Set-Content "$zip.sha256.txt" -Encoding ascii
           Write-Host "Portable SHA-256: $hash"
 
       - name: Upload verified portable artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified
+          name: MangaStudioQt6-Portable-v23.6-RC7.7-WindowsVerified
           path: |
-            MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified.zip
-            MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified.zip.sha256.txt
+            MangaStudioQt6-Portable-v23.6-RC7.7-WindowsVerified.zip
+            MangaStudioQt6-Portable-v23.6-RC7.7-WindowsVerified.zip.sha256.txt
           if-no-files-found: error
           retention-days: 30
