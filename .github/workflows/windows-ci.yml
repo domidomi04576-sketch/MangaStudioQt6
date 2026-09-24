@@ -97,18 +97,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $patch="$env:GITHUB_WORKSPACE\ci\rc77-bubble-breakout.patch"
-          $src="$env:GITHUB_WORKSPACE\work\source"
-          Push-Location $src
-          try {
-            git apply --check $patch
-            if ($LASTEXITCODE -ne 0) { throw "RC7.7 patch preflight failed with $LASTEXITCODE" }
-            git apply $patch
-            if ($LASTEXITCODE -ne 0) { throw "RC7.7 patch apply failed with $LASTEXITCODE" }
-          }
-          finally {
-            Pop-Location
-          }
+          python "$env:GITHUB_WORKSPACE\ci\apply_rc77.py" "$env:GITHUB_WORKSPACE\work\source"
+          if ($LASTEXITCODE -ne 0) { throw "RC7.7 source transform failed with $LASTEXITCODE" }
 
       - name: Configure with CMake
         shell: pwsh
