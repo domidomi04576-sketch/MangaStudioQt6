@@ -72,6 +72,27 @@ jobs:
           Write-Host "Qt root: $qtRoot"
           Write-Host "MinGW bin: $mingwBin"
 
+      - name: Apply validated RC7.6 source fixes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $path="$env:GITHUB_WORKSPACE\work\source\src\ui\studio.h"
+          $text=Get-Content -Raw -LiteralPath $path
+          $old=@'
+    scene.clearSelection();
+    n->setSelected(true);
+    if (k != "panel")
+      targetPicker->setCurrentIndex(1);
+'@
+          $new=@'
+    if (k != "panel" && targetPicker->currentIndex() != 1)
+      targetPicker->setCurrentIndex(1);
+    scene.clearSelection();
+    n->setSelected(true);
+'@
+          if (-not $text.Contains($old)) { throw 'placeAsset selection fix target not found' }
+          $text=$text.Replace($old,$new)
+          [IO.File]::WriteAllText($path,$text,[Text.UTF8Encoding]::new($false))
       - name: Instrument legacy regression checkpoints
         shell: pwsh
         run: |
