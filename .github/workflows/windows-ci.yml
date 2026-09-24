@@ -196,7 +196,7 @@ jobs:
           @'
           MangaStudioQt6 23.6 RC7.6
           Windows CI verified build.
-          Validation: compile + full regression suite + startup smoke test + real normal GUI window/event-loop startup + deployed portable smoke test.
+          Validation: compile + full regression suite + startup smoke test + real GUI startup + deployed smoke test + isolated deployed GUI startup without Qt/MinGW on PATH.
           '@ | Set-Content -LiteralPath "$portable\PORTABLE-READY.txt" -Encoding utf8
           $deployed=Start-Process -FilePath "$portable\MangaStudioQt6.exe" -ArgumentList '--startup-smoke-test' -WorkingDirectory $portable -PassThru -Wait
           $deployedCode=$deployed.ExitCode
@@ -204,6 +204,49 @@ jobs:
           if ($null -eq $deployedCode -or $deployedCode -ne 0) { throw "deployed portable smoke test failed with exit code $deployedCode" }
           Get-ChildItem $portable -Recurse | ForEach-Object { if (-not $_.PSIsContainer) { $_.FullName } } | Out-File "$portable\PACKAGE-FILES.txt" -Encoding utf8
 
+      - name: Verify isolated deployed portable without Qt or MinGW on PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $portable="$env:GITHUB_WORKSPACE\portable\MangaStudioQt6-Portable-v23.6-RC7.6-WindowsVerified"
+          $exe=Join-Path $portable 'MangaStudioQt6.exe'
+          $savedPath=$env:PATH
+          try {
+            $env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+            Write-Host "Isolated PATH: $env:PATH"
+            $smoke=Start-Process -FilePath $exe -ArgumentList '--startup-smoke-test' -WorkingDirectory $portable -PassThru -Wait
+            Write-Host "isolated deployed smoke exit code: $($smoke.ExitCode)"
+            if ($null -eq $smoke.ExitCode -or $smoke.ExitCode -ne 0) { throw "isolated deployed smoke failed with exit code $($smoke.ExitCode)" }
+
+            $gui=Start-Process -FilePath $exe -WorkingDirectory $portable -PassThru
+            try {
+              $deadline=(Get-Date).AddSeconds(15)
+              $seenWindow=$false
+              do {
+                Start-Sleep -Milliseconds 500
+                $gui.Refresh()
+                if ($gui.HasExited) { throw "isolated portable GUI exited early; exit code $($gui.ExitCode)" }
+                if ($gui.MainWindowHandle -ne 0 -or -not [string]::IsNullOrWhiteSpace($gui.MainWindowTitle)) {
+                  $seenWindow=$true
+                  break
+                }
+              } while ((Get-Date) -lt $deadline)
+              Write-Host "isolated portable GUI PID=$($gui.Id) Handle=$($gui.MainWindowHandle) Title='$($gui.MainWindowTitle)'"
+              if (-not $seenWindow) { throw 'isolated portable GUI did not expose a main window within 15 seconds.' }
+              Start-Sleep -Seconds 2
+              $gui.Refresh()
+              if ($gui.HasExited) { throw "isolated portable GUI exited during soak; exit code $($gui.ExitCode)" }
+            }
+            finally {
+              if (-not $gui.HasExited) {
+                Stop-Process -Id $gui.Id -Force
+                Wait-Process -Id $gui.Id -ErrorAction SilentlyContinue
+              }
+            }
+          }
+          finally {
+            $env:PATH=$savedPath
+          }
       - name: Zip verified portable build
         shell: pwsh
         run: |
