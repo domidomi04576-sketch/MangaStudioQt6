@@ -84,6 +84,14 @@ jobs:
           if (-not $text.Contains($old)) { throw 'placeAsset selection fix target not found' }
           $text=$text.Replace($old,$new)
           [IO.File]::WriteAllText($path,$text,[Text.UTF8Encoding]::new($false))
+
+          $testPath="$env:GITHUB_WORKSPACE\work\source\tests\usability.h"
+          $testText=Get-Content -Raw -LiteralPath $testPath
+          $testNeedle='  record.origin->setCurrentIndex(1);'
+          $testReplacement='  record.origin->setCurrentIndex(1);' + [char]10 + '  record.category->setCurrentText("一枚絵（背景＋人物）");'
+          if (-not $testText.Contains($testNeedle)) { throw 'source-record test update target not found' }
+          $testText=$testText.Replace($testNeedle,$testReplacement)
+          [IO.File]::WriteAllText($testPath,$testText,[Text.UTF8Encoding]::new($false))
       - name: Instrument legacy regression checkpoints
         shell: pwsh
         run: |
@@ -110,20 +118,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem "$env:GITHUB_WORKSPACE\build" -Filter '*.exe' -Recurse | Format-Table FullName,Length
 
-      - name: Run legacy synthetic regression suite (diagnostic only)
-        id: legacy_regression
-        continue-on-error: true
+      - name: Run full regression suite
+        id: full_regression
         shell: pwsh
         run: |
           $env:PATH="$env:QT_ROOT\bin;$env:MINGW_BIN;$env:PATH"
           ctest --test-dir "$env:GITHUB_WORKSPACE\build" --output-on-failure --timeout 180
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Legacy synthetic UI regression suite failed. This suite is diagnostic only because it synthesizes modal/mouse GUI events and previously crashed independently of normal startup."
-            exit $LASTEXITCODE
-          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Diagnose legacy regression crash with GDB
-        if: always()
+      - name: Diagnose regression crash with GDB
+        if: failure()
         continue-on-error: true
         shell: pwsh
         run: |
@@ -203,7 +207,7 @@ jobs:
           @'
           MangaStudioQt6 23.6 RC7.6
           Windows CI verified build.
-          Validation: compile + startup smoke test + real normal GUI window/event-loop startup + deployed portable smoke test. Legacy synthetic regression suite is diagnostic-only.
+          Validation: compile + full regression suite + startup smoke test + real normal GUI window/event-loop startup + deployed portable smoke test.
           '@ | Set-Content -LiteralPath "$portable\PORTABLE-READY.txt" -Encoding utf8
           $deployed=Start-Process -FilePath "$portable\MangaStudioQt6.exe" -ArgumentList '--startup-smoke-test' -WorkingDirectory $portable -PassThru -Wait
           $deployedCode=$deployed.ExitCode
