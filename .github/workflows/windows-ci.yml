@@ -78,18 +78,9 @@ jobs:
           $ErrorActionPreference='Stop'
           $path="$env:GITHUB_WORKSPACE\work\source\src\ui\studio.h"
           $text=Get-Content -Raw -LiteralPath $path
-          $old=@'
-    scene.clearSelection();
-    n->setSelected(true);
-    if (k != "panel")
-      targetPicker->setCurrentIndex(1);
-'@
-          $new=@'
-    if (k != "panel" && targetPicker->currentIndex() != 1)
-      targetPicker->setCurrentIndex(1);
-    scene.clearSelection();
-    n->setSelected(true);
-'@
+          $nl=[Environment]::NewLine
+          $old='    scene.clearSelection();' + $nl + '    n->setSelected(true);' + $nl + '    if (k != "panel")' + $nl + '      targetPicker->setCurrentIndex(1);'
+          $new='    if (k != "panel" && targetPicker->currentIndex() != 1)' + $nl + '      targetPicker->setCurrentIndex(1);' + $nl + '    scene.clearSelection();' + $nl + '    n->setSelected(true);'
           if (-not $text.Contains($old)) { throw 'placeAsset selection fix target not found' }
           $text=$text.Replace($old,$new)
           [IO.File]::WriteAllText($path,$text,[Text.UTF8Encoding]::new($false))
