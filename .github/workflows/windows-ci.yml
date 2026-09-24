@@ -99,6 +99,25 @@ jobs:
             exit $LASTEXITCODE
           }
 
+      - name: Diagnose legacy regression crash with GDB
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Continue'
+          $env:PATH="$env:QT_ROOT\bin;$env:MINGW_BIN;$env:PATH"
+          $gdb=Join-Path $env:MINGW_BIN 'gdb.exe'
+          $testExe="$env:GITHUB_WORKSPACE\build\MangaStudioQt6Tests.exe"
+          $out="$env:GITHUB_WORKSPACE\build\gdb-test-results"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          if (-not (Test-Path $gdb)) {
+            Write-Warning "gdb.exe not available at $gdb"
+            exit 0
+          }
+          & $gdb -q -batch -ex "set pagination off" -ex "run" -ex "thread apply all bt" --args $testExe $out
+          Write-Host "GDB diagnostic exit code: $LASTEXITCODE"
+          exit 0
+
       - name: Verify hidden startup smoke test
         shell: pwsh
         run: |
