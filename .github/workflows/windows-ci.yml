@@ -102,24 +102,47 @@ jobs:
       - name: Verify hidden startup smoke test
         shell: pwsh
         run: |
+          $ErrorActionPreference='Stop'
           $env:PATH="$env:QT_ROOT\bin;$env:MINGW_BIN;$env:PATH"
           $exe="$env:GITHUB_WORKSPACE\build\MangaStudioQt6.exe"
-          & $exe --startup-smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "startup smoke test failed with $LASTEXITCODE" }
+          $p=Start-Process -FilePath $exe -ArgumentList '--startup-smoke-test' -WorkingDirectory "$env:GITHUB_WORKSPACE\build" -PassThru -Wait
+          $code=$p.ExitCode
+          Write-Host "startup smoke exit code: $code"
+          if ($null -eq $code -or $code -ne 0) { throw "startup smoke test failed with exit code $code" }
 
-      - name: Verify actual GUI event-loop startup
+      - name: Verify real normal GUI startup and event loop
         shell: pwsh
         run: |
+          $ErrorActionPreference='Stop'
           $env:PATH="$env:QT_ROOT\bin;$env:MINGW_BIN;$env:PATH"
-          $marker=Join-Path $env:TEMP 'MangaStudioQt6-ci-gui-startup.txt'
-          Remove-Item -Force -ErrorAction SilentlyContinue $marker
           $exe="$env:GITHUB_WORKSPACE\build\MangaStudioQt6.exe"
-          & $exe --ci-gui-startup-test
-          $code=$LASTEXITCODE
-          if (Test-Path $marker) { Get-Content $marker | Out-Host }
-          if ($code -ne 0) { throw "visible GUI startup test failed with $code" }
-          if (-not (Test-Path $marker)) { throw 'GUI startup marker was not created.' }
-          if (-not ((Get-Content -Raw $marker) -match 'GUI_STARTUP_OK')) { throw 'GUI startup marker did not report success.' }
+          $p=Start-Process -FilePath $exe -WorkingDirectory "$env:GITHUB_WORKSPACE\build" -PassThru
+          try {
+            $deadline=(Get-Date).AddSeconds(15)
+            $seenWindow=$false
+            do {
+              Start-Sleep -Milliseconds 500
+              $p.Refresh()
+              if ($p.HasExited) {
+                throw "normal GUI exited before validation; exit code $($p.ExitCode)"
+              }
+              if ($p.MainWindowHandle -ne 0 -or -not [string]::IsNullOrWhiteSpace($p.MainWindowTitle)) {
+                $seenWindow=$true
+                break
+              }
+            } while ((Get-Date) -lt $deadline)
+            Write-Host "GUI PID=$($p.Id) Handle=$($p.MainWindowHandle) Title='$($p.MainWindowTitle)'"
+            if (-not $seenWindow) { throw 'normal GUI process stayed alive but no main window was observed within 15 seconds.' }
+            Start-Sleep -Seconds 2
+            $p.Refresh()
+            if ($p.HasExited) { throw "normal GUI exited during event-loop soak; exit code $($p.ExitCode)" }
+          }
+          finally {
+            if (-not $p.HasExited) {
+              Stop-Process -Id $p.Id -Force
+              Wait-Process -Id $p.Id -ErrorAction SilentlyContinue
+            }
+          }
 
       - name: Build portable folder
         shell: pwsh
@@ -138,10 +161,12 @@ jobs:
           @'
           MangaStudioQt6 23.6 RC7.6
           Windows CI verified build.
-          Validation: compile + startup smoke test + visible GUI event-loop startup + deployed portable smoke test. Legacy synthetic regression suite is diagnostic-only.
+          Validation: compile + startup smoke test + real normal GUI window/event-loop startup + deployed portable smoke test. Legacy synthetic regression suite is diagnostic-only.
           '@ | Set-Content -LiteralPath "$portable\PORTABLE-READY.txt" -Encoding utf8
-          & "$portable\MangaStudioQt6.exe" --startup-smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "deployed portable smoke test failed with $LASTEXITCODE" }
+          $deployed=Start-Process -FilePath "$portable\MangaStudioQt6.exe" -ArgumentList '--startup-smoke-test' -WorkingDirectory $portable -PassThru -Wait
+          $deployedCode=$deployed.ExitCode
+          Write-Host "deployed portable smoke exit code: $deployedCode"
+          if ($null -eq $deployedCode -or $deployedCode -ne 0) { throw "deployed portable smoke test failed with exit code $deployedCode" }
           Get-ChildItem $portable -Recurse | ForEach-Object { if (-not $_.PSIsContainer) { $_.FullName } } | Out-File "$portable\PACKAGE-FILES.txt" -Encoding utf8
 
       - name: Zip verified portable build
