@@ -72,7 +72,7 @@ jobs:
           Write-Host "Qt root: $qtRoot"
           Write-Host "MinGW bin: $mingwBin"
 
-      - name: Apply validated RC7.6 source fixes
+      - name: Apply final validated RC7.6 fixes
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -92,23 +92,12 @@ jobs:
           if (-not $testText.Contains($testNeedle)) { throw 'source-record test update target not found' }
           $testText=$testText.Replace($testNeedle,$testReplacement)
           [IO.File]::WriteAllText($testPath,$testText,[Text.UTF8Encoding]::new($false))
-      - name: Instrument legacy regression checkpoints
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          $path="$env:GITHUB_WORKSPACE\work\source\tests\regression.h"
-          $text=Get-Content -Raw -LiteralPath $path
-          $needle='  auto check = [&](QString name, bool pass) {'
-          $replacement='  auto check = [&](QString name, bool pass) {' + [Environment]::NewLine + '    qInfo().noquote() << "[REGRESSION]" << name << (pass ? "PASS" : "FAIL");'
-          if (-not $text.Contains($needle)) { throw 'regression checkpoint injection target not found' }
-          $text=$text.Replace($needle,$replacement)
-          [IO.File]::WriteAllText($path,$text,[Text.UTF8Encoding]::new($false))
       - name: Configure with CMake
         shell: pwsh
         run: |
           $src="$env:GITHUB_WORKSPACE\work\source"
           $build="$env:GITHUB_WORKSPACE\build"
-          cmake -S $src -B $build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_ROOT" '-DCMAKE_CXX_FLAGS_RELEASE=-O2 -g -DNDEBUG'
+          cmake -S $src -B $build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_ROOT"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build application and regression test executable
